@@ -6,13 +6,6 @@ import "forge-std/console.sol";
 import "../contracts/TokenTransferer.sol";
 import "../contracts/PaymentGateway.sol";
 
-interface IERC20 {
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function decimals() external view returns (uint8);
-    function symbol() external view returns (string memory);
-}
 
 /**
  * @title OnChainTest
@@ -25,13 +18,12 @@ interface IERC20 {
  * - TOKEN_TRANSFERER: Deployed TokenTransferer contract address
  * - USER_PAYMENT_ADDR: User's payment address (created off-chain)
  * - USER_PAYMENT_PRIVATE_KEY: Private key for the payment address
- * - TEST_TOKEN: Token contract address to test with (must have approve/transfer)
+ * - TEST_TOKEN: Token contract address to test with
  * 
  * Usage:
- * forge script script/OnChainTest.s.sol --rpc-url https://sepolia-rollup.arbitrum.io/rpc --private-key <KEY> --broadcast
+ * forge script script/OnChainTest.s.sol --rpc-url <RPC_URL> --broadcast
  */
 contract OnChainTest is Script {
-    // Environment variable placeholders
     address public hotWallet;
     address public paymentGateway;
     address public tokenTransferer;
@@ -41,7 +33,6 @@ contract OnChainTest is Script {
     address public serviceOperator;
 
     function setUp() external {
-        // Load from environment variables
         serviceOperator = vm.addr(vm.envUint("PRIVATE_KEY"));
         hotWallet = vm.envAddress("HOT_WALLET");
         paymentGateway = vm.envAddress("PAYMENT_GATEWAY");
@@ -50,7 +41,6 @@ contract OnChainTest is Script {
         userPaymentPrivateKey = vm.envUint("USER_PAYMENT_PRIVATE_KEY");
         testToken = vm.envAddress("TEST_TOKEN");
 
-        // Validate addresses
         require(hotWallet != address(0), "Invalid HOT_WALLET");
         require(paymentGateway != address(0), "Invalid PAYMENT_GATEWAY");
         require(tokenTransferer != address(0), "Invalid TOKEN_TRANSFERER");
@@ -63,115 +53,83 @@ contract OnChainTest is Script {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
 
         console.log("");
-        console.log("╔════════════════════════════════════════════════╗");
-        console.log("║  EIP-7702 Payment Gateway On-Chain Test Suite  ║");
-        console.log("╚════════════════════════════════════════════════╝");
+        console.log("EIP-7702 On-Chain Test");
         console.log("");
 
         console.log("Configuration:");
         console.log("  Service Operator    :", serviceOperator);
         console.log("  Hot Wallet          :", hotWallet);
-        console.log("  Payment Gateway     :", paymentGateway);
         console.log("  Token Transferer    :", tokenTransferer);
         console.log("  User Payment Addr   :", userPaymentAddr);
         console.log("  Test Token          :", testToken);
         console.log("");
 
-        // Get initial balances
         uint256 initialUserPaymentBalance = IERC20(testToken).balanceOf(userPaymentAddr);
         uint256 initialHotWalletBalance = IERC20(testToken).balanceOf(hotWallet);
 
-        console.log("Initial Balances:");
-        console.log("  User Payment Address:", initialUserPaymentBalance);
-        console.log("  Hot Wallet          :", initialHotWalletBalance);
-        console.log("");
+        console.log("Initial State:");
+        console.log("  Payment Address Balance:", initialUserPaymentBalance);
+        console.log("  Hot Wallet Balance     :", initialHotWalletBalance);
+        
+        console.log( block.chainid);
 
-        // Test 1: Fund payment address with test tokens
-        console.log("TEST 1: Funding payment address with tokens");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-        // Get user to send tokens to payment address
-        // For this test, we'll assume the user sends tokens (simulated via transfer)
-        // In production, user would send tokens to their payment address
-        console.log("  [ACTION] User sends 100 tokens to payment address");
-        console.log("  [STATUS] Simulating user transfer...");
-        console.log("");
-
-        // Test 2: Verify EIP-7702 authorization
-        console.log("TEST 2: Creating EIP-7702 authorization");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
+        console.log("Creating EIP-7702 Delegation:");
+        
         vm.startBroadcast(deployerPrivateKey);
 
-        // Sign EIP-7702 delegation
-        Vm.SignedDelegation memory auth = vm.signDelegation(tokenTransferer, userPaymentPrivateKey);
+        // Compute the digest for delegation signing
+        // Hash: keccak256(abi.encode(chainId, nonce, implementation))
+        // bytes32 digest = keccak256(abi.encode(block.chainid, uint64(1), tokenTransferer));
 
-        console.log("  [CREATED] EIP-7702 Authorization:");
-        console.log("    Implementation  :", auth.implementation);
-        console.log("    Nonce           :", auth.nonce);
-        console.log("    V               :", auth.v);
-        console.log("    R               :", auth.r);
-        console.log("    S               :", auth.s);
+        // Sign the digest manually using vm.sign()
+        // Reference: https://getfoundry.sh/reference/cheatcodes/sign
+        // (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPaymentPrivateKey, digest);
+
+        // Convert v from standard ECDSA (27/28) to EIP-7702 parity format (0/1)
+        // vm.sign() returns v as 27 or 28, but EIP-7702 requires 0 or 1
+        // uint8 v_parity = v - 27;
+
+        // Manually construct SignedDelegation struct with nonce = 0
+        // VmSafe.SignedDelegation memory auth = VmSafe.SignedDelegation({
+        //     v: v_parity,  // Use converted parity (0 or 1)
+        //     r: r,
+        //     s: s,
+        //     nonce: 1,  // Hardcoded to 0 as requested
+        //     implementation: tokenTransferer
+        // });
+
+        VmSafe.SignedDelegation memory auth = vm.signDelegation(tokenTransferer, userPaymentPrivateKey);
+
+        console.log("    Implementation :", auth.implementation);
+        console.log("    Nonce          :", auth.nonce);
         console.log("");
 
-        // Test 3: Attach delegation and collect tokens
-        console.log("TEST 3: Collecting tokens with EIP-7702 delegation");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.log("Attaching delegation and collecting tokens:");
 
-        try {
-            // Attach the EIP-7702 authorization
-            console.log("  [ACTION] Attaching EIP-7702 delegation...");
-            vm.attachDelegation(auth);
+        // Attach the delegation
+        vm.attachDelegation(auth);
 
-            // Call transfer on the payment address (now delegated to TokenTransferer)
-            console.log("  [ACTION] Calling transfer on delegated payment address...");
-            TokenTransferer(payable(userPaymentAddr)).transfer(testToken, hotWallet);
-
-            console.log("  [SUCCESS] Tokens collected successfully!");
-        } catch Error(string memory reason) {
-            console.log("  [ERROR]", reason);
-        }
+        // Call transfer on delegated address
+        TokenTransferer(payable(userPaymentAddr)).transfer(testToken, hotWallet);
+        
 
         vm.stopBroadcast();
 
         console.log("");
-
-        // Test 4: Verify collection results
-        console.log("TEST 4: Verifying collection results");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.log("Verifying Results:");
 
         uint256 finalUserPaymentBalance = IERC20(testToken).balanceOf(userPaymentAddr);
         uint256 finalHotWalletBalance = IERC20(testToken).balanceOf(hotWallet);
 
-        console.log("Final Balances:");
-        console.log("  User Payment Address:", finalUserPaymentBalance);
-        console.log("  Hot Wallet          :", finalHotWalletBalance);
+        console.log("  Final Payment Address Balance:", finalUserPaymentBalance);
+        console.log("  Final Hot Wallet Balance     :", finalHotWalletBalance);
+        console.log("  Tokens Collected             :", finalHotWalletBalance - initialHotWalletBalance);
         console.log("");
 
-        uint256 collectedAmount = finalHotWalletBalance - initialHotWalletBalance;
-        console.log("Tokens Collected    :", collectedAmount);
-        console.log("");
-
-        // Test 5: Summary
-        console.log("Test Summary:");
-        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        console.log("  [✓] EIP-7702 authorization created successfully");
-        console.log("  [✓] Delegation attached to transaction");
-        console.log("  [✓] Tokens collected from payment address");
-        console.log("  [✓] Hot wallet received tokens");
-        console.log("  [✓] Payment address emptied");
-        console.log("");
-
-        if (finalUserPaymentBalance == 0 && collectedAmount > 0) {
-            console.log("╔════════════════════════════════════════════════╗");
-            console.log("║           ✓ ALL TESTS PASSED ✓                 ║");
-            console.log("╚════════════════════════════════════════════════╝");
+        if (finalUserPaymentBalance == 0 && finalHotWalletBalance > initialHotWalletBalance) {
+            console.log(" Test passed - tokens collected successfully");
         } else {
-            console.log("╔════════════════════════════════════════════════╗");
-            console.log("║  ⚠ Some tests did not complete as expected    ║");
-            console.log("╚════════════════════════════════════════════════╝");
+            console.log("Test failed - collection did not complete");
         }
-
-        console.log("");
     }
 }
